@@ -1,4 +1,4 @@
-# COVID-19 Risk Responses
+# COVID-19 Risk Response
 
  <font size="4"> This repository provides replication code for <em>Better Late Than Never: Trends in COVID-19 Infection Rates, Risk Perceptions, and Behavioral Responses in the USA</em>, forthcoming in <em>Journal of General Internal Medicine</em>. 
 

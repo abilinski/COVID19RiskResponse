@@ -1,0 +1,273 @@
+---
+output:
+  pdf_document:
+    keep_tex: FALSE
+    includes: 
+      in_header: header.tex
+    fig_caption: yes
+
+---
+
+\begin{center} 
+    \textbf{\scshape \LARGE Appendix}\\  \vspace{2mm}
+    {\large Trends in Risk Perceptions, Behavioral Responses, and COVID-19 Rates in the US
+}\\ \vspace{2mm} 
+    {\large Alyssa Bilinski\footnote{Aggregated data and code are publicly available on GitHub (\href{https://github.com/abilinski/COVID19RiskResponse}{link}).} $\cdot$ Ezekiel Emanuel $\cdot$ Joshua Salomon $\cdot$ Atheendar Venkataramani} \\
+\end{center}
+    
+\vspace{-0.50em}
+
+\bigskip
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+# Survey items
+
+This research is based on survey results from Carnegie Mellon
+University’s \href{https://covidcast.cmu.edu/surveys.html}{Delphi Research Group}.
+
+## Risk perceptions
+
+\smallskip 
+
+### Worry
+- \textbf{C9 (Before September 8).} How do you feel about the possibility that you or someone in your immediate family might become ill from COVID-19 (coronavirus disease)?
+
+- \textbf{C9 (From September 8).} How worried do you feel that you or someone in your immediate family might become seriously ill from COVID-19 (coronavirus disease)?
+
+- \textbf{Responses.} "Very worried", "Somewhat worried", "Not too worried", "Not worried at all"
+
+- \textbf{Coding.} We identified individuals who selected "Very worried."
+
+\bigskip 
+
+## Risk behaviors
+
+\smallskip 
+
+### Average contacts 
+
+
+- \textbf{C10.} In the past 24 hours, with how many people have you had direct contact, outside of your household?  Your best estimate is fine.  ["Direct contact" means: a conversation lasting more than 5 minutes with a person who is closer than 6 feet away from you, or physical contact like hand-shaking, hugging, or kissing.]
+
+- \textbf{Responses.} Readers filled in numbers corresponding to "At work", "Shopping for groceries and other essentials", "In social gatherings" and "Other"
+
+- \textbf{Coding.} We added the number provided in each category.  We included a response if an individual filled a number in at least one category. 
+
+\bigskip 
+
+### Avoiding others 
+
+- \textbf{C7. (Before September 8)} To what extent are you intentionally avoiding contact with other people?
+
+- \textbf{Options.} "All of the time", "Most of the time; I only leave my house to buy food or other essentials", "Some of the time; I have reduced the amount of times I am in public spaces, social gatherings, or at work"; "None of the time"
+
+- \textbf{Coding.} We identified individuals who selected "All of the time" or "Most of the time; I only leave my house to buy food or other essentials."
+
+\bigskip 
+
+### Unmasked public activity
+
+- \textbf{C13 (From September 8).} In the last 24 hours, have you done any of the following? Please select all that apply.
+
+- \textbf{Options.} "Gone to work or school outside the place where you are currently staying", "Gone to a market, grocery store, or pharmacy", "Gone to a bar, restaurant, or cafe", "Spent time with someone who isn't currently staying with you", "Attended an event with more than 10 people, Used public transit"
+
+- \textbf{C13a (From September 8).} During which activities in the past 24 hours did you wear a mask? Please select all that apply
+
+- \textbf{Options.} Activities the respondent had selected for C13.
+
+- \textbf{Coding.} We first identified individuals who engaged in no public activities, selected "None of the above" for C13, OR who reported in C13a wearing a mask for all activities selected in C13.  We allowed a possible exception of not reporting wearing a mask while having "Gone to a bar, restaurant, or cafe", due to ambiguity around wearing a mask during eating.  The outcome "unmasked public activities" was 1 minus this composite.
+
+\bigskip
+
+\clearpage
+
+# Data Cleaning and Weights
+
+Of 10,842,811 responses completed fromm May 15, 2020 to November 22, 2020 (inclusive), we removed 936,700 (9\%) for poor data quality (e.g., more than 30 people in a household, reporting having experienced all symptoms, body temperature above 104, profane or political responses in "other symptoms", contacts greater than 100) and 238,711 (2%) that were missing a valid zip code linking to a state or that lived outside the United States, with 9,667,400 (89\%) included in the final sample. Weights are explained in \href{https://arxiv.org/pdf/2009.14675.pdf}{this paper}.  Comparisons of weighted and unweighted demographic characteristics and missingness are provided below.  For simplicity, for each outcome reported, we omitted responses with missing data.  With the exception of the September survey change, when missingness in average contacts increased from 16% to 21%, missing data patterns were fairly stable over time. 
+
+
+```{r echo = F}
+
+# library
+library(here)
+
+# source global options
+source(here("global_options.R"))
+
+# set working directory
+setwd(here("0 - Data"))
+load("summary_extract2021-02-06.RData")
+
+# state names + abbreviations + populations
+pop = read.csv("population.csv")
+
+# load and process case data
+data <- read.csv("all-states-history2.csv") %>% left_join(pop, c("state" = "State")) %>%
+  mutate(date_cleaned = as.Date(as.character(date), format = "%Y-%m-%d"),
+         week = isoweek(date_cleaned)) %>%
+  group_by(week) %>% mutate(date.temp = max(date_cleaned)) %>% ungroup() %>%
+  dplyr::group_by(state, region, StateName, week, date.temp) %>% 
+  dplyr::summarize(cases = sum(positiveIncrease), deaths = sum(deathIncrease), hosp = sum(hospitalizedIncrease),
+            perc_pos = sum(positiveIncrease)/sum(positiveIncrease + negativeIncrease),
+            cases100K = cases/Population[1]*100000, deaths100K = deaths/Population[1]*100000, hosp100K = hosp/Population[1]*100000,
+            tests = sum(positiveIncrease + negativeIncrease), tests_prop = tests/Population[1]) %>%
+  gather(var, value, cases, deaths, hosp, perc_pos, cases100K, deaths100K, hosp100K, tests, tests_prop) %>%
+  group_by(state, region, var) %>% mutate(
+    value = ifelse(value<0, 0, value),
+    lag1 = lag(value, 1),
+                                           lag2 = lag(value, 2),
+                                           chg = value - lag1,
+                                           perc_chg = (value - lag1)/lag1) %>%
+  gather(var2, value2, value, lag1, lag2, chg, perc_chg) %>% mutate(ind = paste(var, var2, sep = "_")) %>%
+  ungroup() %>% dplyr::select(-var, -var2) %>%
+  spread(ind, value2) %>% group_by(state, region) %>% 
+  mutate(max = max(cases100K_value, na.rm = T),
+         max.week = week[cases100K_value==max],
+         max.date = date.temp[cases100K_value==max],
+
+         peak.time = ifelse(max.date < as.Date("2020-07-01"), "Spring", "Summer"),
+         peak.time = ifelse(max.date > as.Date("2020-08-15"), "Increasing", peak.time),
+         
+         min.summer = min(cases100K_value[date.temp>"2020-05-15" & date.temp<"2020-08-01"]),
+         min.week = week[cases100K_value==min.summer],
+         max.summer = max(cases100K_value[date.temp> "2020-07-01"]),
+         
+         weeks.since.peak = week - max.week,
+         weeks.since.min = week - min.week
+         
+         ) %>% ungroup() 
+
+data2 = data %>% group_by(state) %>% 
+  summarize(sum1 = sum(cases100K_value[date.temp>="2020-03-01" & date.temp<"2020-05-31"]),
+            sum2 = sum(cases100K_value[date.temp>="2020-07-01" & date.temp<"2020-08-31"]),
+            sum3 = sum(cases100K_value[date.temp>="2020-09-01" & date.temp<"2020-10-31"]))
+
+spring = unlist(data2 %>% arrange(-sum1) %>% dplyr::select(state) %>% filter(state!="LA"))[1:10]
+summer = unlist(data2 %>% arrange(-sum2) %>% dplyr::select(state) %>% filter(state!="LA"))[1:10]
+fall = unlist(data2 %>% arrange(-sum3) %>% dplyr::select(state))[1:10]
+
+US_pop = 328200000
+national <- read.csv("all-states-history2.csv") %>% 
+  mutate(date_cleaned = as.Date(as.character(date), format = "%Y-%m-%d"),
+         week = isoweek(date_cleaned)) %>% group_by(week) %>% 
+  summarize(cases = sum(positiveIncrease), deaths = sum(deathIncrease), hosp = sum(hospitalizedIncrease),
+            perc_pos = sum(positiveIncrease)/sum(positiveIncrease + negativeIncrease),
+            cases100K = cases/US_pop*100000, deaths100K = deaths/US_pop*100000, hosp100K = hosp/US_pop*100000, tests = sum(positiveIncrease + negativeIncrease)) %>%
+  gather(var, value, cases, deaths, hosp, perc_pos, cases100K, deaths100K, hosp100K, tests) %>%
+  group_by(var) %>% mutate(lag1 = lag(value, 1),
+                                  lag2 = lag(value, 2),
+                                  chg = value - lag1,
+                                  perc_chg = (value - lag1)/lag1) %>%
+  gather(var2, value2, value, lag1, lag2, chg, perc_chg) %>% mutate(ind = paste("natl", var, var2, sep = "_")) %>%
+  ungroup() %>% select(-var, -var2) %>%
+  spread(ind, value2)
+
+# merge data
+all = h %>% filter(date>="2020-05-15" & date<="2020-11-22") %>%
+  #left_join(data, c("state_coded" = "StateName", "week" = "week")) %>% 
+  left_join(data, c("state_id" = "state", "week" = "week")) %>% 
+  left_join(national, c("week" = "week")) 
+us = i %>% filter(date>="2020-05-15" & date<="2020-11-22") %>% left_join(national, c("week" = "week")) 
+
+```
+
+```{r, results = "tex"}
+
+a = all %>% ungroup() %>% filter(!state_id%in%c("AS", "GU", "PR", "VI", "MP") & !is.na(state_id)) %>%
+  dplyr::select(state_id, gender_missing, age_missing, avoid_people_missing,
+                contacts_missing, contacts_missing1, contacts_missing2,
+                contacts_missing3, contacts_missing4, 
+                gender_avg, age, date, worried_missing, activities_missing) %>%
+  filter(date!="2020-09-13") %>%
+  mutate(chg = date>="2020-09-08") %>%
+  gather(var, value, -state_id, -date, -chg) %>% 
+  group_by(var, chg) %>% 
+  summarize(out = weighted.mean(value, weight = num)) %>%
+  mutate(out = ifelse(out>.99, NA, out)) %>% spread(chg,out)
+
+names(a) = c("Variable", "April 6-September 6", "September 14-November 1")
+a[,1] = c("% missing public activities", "% over 65", "% missing age", "% missing avoiding others", 
+          "% missing contacts (all)","% missing contacts (work)", "% missing contacts (shopping)", "% missing contacts (social)", "% missing contacts (other)", "% female", "% missing gender", "% missing worry about illness")
+
+
+kable(a %>% arrange(Variable), digits = 2, caption = "Weighted demographic questions and missing data") %>% kable_styling(latex_options =c("striped", "hold_position"))
+```
+
+```{r, results = "tex"}
+
+a = all %>% ungroup() %>% filter(!state_id%in%c("AS", "GU", "PR", "VI", "MP") & !is.na(state_id)) %>%
+  dplyr::select(gender_missingT, age_missingT, avoid_people_missingT, contacts_missingT, contacts_missing1T, contacts_missing2T, contacts_missing3T, contacts_missing4T, gender_avg_total, age_total, date, worried_missingT, activities_missingT) %>%
+  filter(date!="2020-09-13") %>%
+  mutate(chg = date>="2020-09-08") %>%
+  gather(var, value, -date, -chg) %>% 
+  group_by(var, chg) %>% 
+  summarize(out = weighted.mean(value, weight = num)) %>% 
+  mutate(out = ifelse(out>.99, NA, out)) %>% spread(chg,out)
+
+names(a) = c("Variable", "April 6-September 6", "September 14-November 1")
+a[,1] = c("% missing public activities", "% over 65", "% missing age", "% missing avoiding others", 
+         "% missing contacts (work)", "% missing contacts (shopping)", "% missing contacts (social)", "% missing contacts (other)",  "% missing contacts (all)", "% female", "% missing gender", "% missing worry about illness")
+
+kable(a %>% arrange(Variable), digits = 2, caption = "Unweighted demographic questions and missing data") %>% kable_styling(latex_options =c("striped", "hold_position"))
+```
+
+```{r, results = "tex", eval = F}
+
+a = all %>% ungroup() %>% filter(!state_id%in%c("AS", "GU", "PR", "VI", "MP") & !is.na(state_id)) %>%
+  dplyr::select(state_id, gender_missing, age_missing, avoid_people_missing,
+                contacts_missing, contacts_missing1, contacts_missing2,
+                contacts_missing3, contacts_missing4, 
+                gender_avg, age, date, worried_missing, activities_missing, activities_missingv2) %>%
+  filter(date!="2020-09-13") %>%
+  mutate(chg = date>="2020-09-08") %>%
+  gather(var, value, -state_id, -date) %>% 
+  group_by(var) %>% 
+  summarize(out = weighted.mean(value, weight = num)) %>%
+  mutate(out = ifelse(out>.99, NA, out))
+
+names(a) = c("", "April 6-September 6", "September 14-November 1")
+#a[,1] = c("% over 65", "% missing age", "% missing avoiding others", 
+#          "% missing all contacts","% missing work contacts", "% missing shopping contacts", "% missing social contacts", "% missing other contacts", "% female", "% missing gender", "% missing worry about illness", "", "")
+
+
+kable(a, digits = 2, caption = "Weighted demographic questions and missing data") %>% kable_styling(latex_options =c("striped", "hold_position"))
+
+```
+
+\clearpage
+
+\begin{landscape}
+```{r, echo = F, results = "tex", fig.height = 7, fig.width = 11, fig.align = "center", fig = T,  fig.cap = "\\label{fig1} Demographics and missingness over time", fig.width = 10}
+
+a = all %>% ungroup() %>% filter(!state_id%in%c("AS", "GU", "PR", "VI", "MP") & !is.na(state_id)) %>%
+  dplyr::select(state_id, gender_missing, age_missing, avoid_people_missing,
+                contacts_missing, contacts_missing1, contacts_missing2,
+                contacts_missing3, contacts_missing4, 
+                gender_avg, age, date, worried_missing, activities_missing) %>%
+  gather(var, value, -state_id, -date) %>% 
+  filter(date!="2020-09-13") %>%
+  group_by(var, date) %>% 
+  summarize(out = weighted.mean(value, weight = num)) %>%
+  mutate(out = ifelse(out>.99, NA, out),
+         var_cat = ifelse(var=="activities_missing", "% missing public activities", "% over 65"),
+         var_cat = ifelse(var=="age_missing", "% missing age", var_cat),
+         var_cat = ifelse(var=="avoid_people_missing", "% missing avoiding others", var_cat),
+         var_cat = ifelse(var=="contacts_missing", "% missing contacts (all)", var_cat),
+         var_cat = ifelse(var=="contacts_missing1", "% missing contacts (work)", var_cat),
+         var_cat = ifelse(var=="contacts_missing2", "% missing contacts (shopping)", var_cat),
+         var_cat = ifelse(var=="contacts_missing3", "% missing contacts (social)", var_cat),
+         var_cat = ifelse(var=="contacts_missing4", "% missing contacts (other)", var_cat),
+         var_cat = ifelse(var=="gender_avg", "% female", var_cat),
+         var_cat = ifelse(var=="gender_missing", "% missing gender", var_cat),
+         var_cat = ifelse(var=="worried_missing", "% missing worried", var_cat))
+
+ggplot(a, aes(x = date, y = out, group = paste(var, date>="2020-09-08"))) + facet_wrap(.~var_cat) + geom_line() + theme_minimal() + labs(x = "", y = "") +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+labs(x = "", y = "")
+
+```
+
+\end{landscape}

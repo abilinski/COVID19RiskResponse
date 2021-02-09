@@ -1,0 +1,238 @@
+---
+output:
+  pdf_document:
+    keep_tex: true
+    includes: 
+      in_header: header.tex
+    fig_caption: yes
+---
+
+\begin{center} 
+    \textbf{\scshape \LARGE Figures}\\  \vspace{2mm}
+    {\large Trends in risk perceptions, behavioral responses, and Covid-19 infection rates in the US
+}\\ \vspace{2mm} 
+    {\large Alyssa Bilinski $\cdot$ Ezekiel Emanuel $\cdot$ Joshua Salomon $\cdot$ Atheendar Venkataramani} \\
+\end{center}
+    
+\vspace{-0.50em}
+
+\bigskip
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+
+```{r echo = F}
+
+# library
+library(here)
+
+# source global options
+source(here("global_options.R"))
+
+# set working directory
+setwd(here("0 - Data"))
+load("summary_extract2021-02-02.RData")
+
+# state names + abbreviations + populations
+pop = read.csv("population.csv")
+
+# load and process case data
+data <- read.csv("all-states-history2.csv") %>% left_join(pop, c("state" = "State")) %>%
+  mutate(date_cleaned = as.Date(as.character(date), format = "%m/%d/%y"),
+         week = isoweek(date_cleaned)) %>%
+  group_by(week) %>% mutate(date.temp = max(date_cleaned)) %>% ungroup() %>%
+  dplyr::group_by(state, region, StateName, week, date.temp) %>% 
+  dplyr::summarize(cases = sum(positiveIncrease), deaths = sum(deathIncrease), hosp = sum(hospitalizedIncrease),
+            perc_pos = sum(positiveIncrease)/sum(positiveIncrease + negativeIncrease),
+            cases100K = cases/Population[1]*100000, deaths100K = deaths/Population[1]*100000, hosp100K = hosp/Population[1]*100000,
+            tests = sum(positiveIncrease + negativeIncrease), tests_prop = tests/Population[1]) %>%
+  gather(var, value, cases, deaths, hosp, perc_pos, cases100K, deaths100K, hosp100K, tests, tests_prop) %>%
+  group_by(state, region, var) %>% mutate(
+    value = ifelse(value<0, 0, value),
+    lag1 = lag(value, 1),
+                                           lag2 = lag(value, 2),
+                          lead = lead(value, 1),
+                           lead2 = lead(value, 2),
+                                           chg = value - lag1,
+                                           perc_chg = (value - lag1)/lag1) %>%
+  gather(var2, value2, value, lag1, lag2, lead, lead2, chg, perc_chg) %>% mutate(ind = paste(var, var2, sep = "_")) %>%
+  ungroup() %>% dplyr::select(-var, -var2) %>%
+  spread(ind, value2) %>% group_by(state, region) %>% 
+  mutate(max = max(cases100K_value, na.rm = T),
+         max.week = week[cases100K_value==max],
+         max.date = date.temp[cases100K_value==max],
+
+         peak.time = ifelse(max.date < as.Date("2020-07-01"), "Spring", "Summer"),
+         peak.time = ifelse(max.date > as.Date("2020-08-15"), "Increasing", peak.time),
+         
+         min.summer = min(cases100K_value[date.temp>"2020-05-15" & date.temp<"2020-08-01"]),
+         min.week = week[cases100K_value==min.summer],
+         max.summer = max(cases100K_value[date.temp> "2020-07-01"]),
+         
+         weeks.since.peak = week - max.week,
+         weeks.since.min = week - min.week
+         
+         ) %>% ungroup() 
+
+# peak states over time
+data2 = data %>% group_by(state) %>% 
+  summarize(sum1 = sum(cases100K_value[date.temp>="2020-03-01" & date.temp<"2020-05-31"]),
+            sum2 = sum(cases100K_value[date.temp>="2020-07-01" & date.temp<"2020-08-31"]),
+            sum3 = sum(cases100K_value[date.temp>="2020-09-01" & date.temp<"2020-10-31"]))
+
+# peak states by season, excluding LA due to repetition
+spring = unlist(data2 %>% arrange(-sum1) %>% dplyr::select(state) %>% filter(state!="LA"))[1:10]
+summer = unlist(data2 %>% arrange(-sum2) %>% dplyr::select(state) %>% filter(state!="LA"))[1:10]
+fall = unlist(data2 %>% arrange(-sum3) %>% dplyr::select(state))[1:10]
+save(spring, summer, fall, file = "state_cats.RData")
+
+# merge data
+all = h %>% filter(date >= "2020-05-15" & date<="2020-11-22") %>%
+  left_join(data, c("state_id" = "state", "week" = "week")) %>% 
+  mutate(worried_sick = worried_sickv2, 
+         avoid_people = avoid_peoplev2, 
+         activities_masked_or_none = activities_masked_or_nonev2)
+
+# add labels 
+plotK = all %>% filter(!is.na(region)) %>%
+  gather(var, value, worried_sick, cases100K_value, contacts_avg_mod, avoid_people, 
+         activities_masked_or_none) %>%
+  group_by(var, state_id, region) %>%
+  mutate(state_cat = ifelse(state_id %in% spring, "Spring peak", "Summer peak"),
+         state_cat = ifelse(state_id %in% fall, "Fall peak", state_cat),
+         state_cat = factor(state_cat, levels = c("Spring peak", "Summer peak", "Fall peak")),
+         region = factor(region, levels = c("Northeast", "West", "South", "Midwest")),
+        var_cat = ifelse(grepl("cases100K_value", var), "Cases per 100K", "Worried about severe illness"),
+         var_cat = ifelse(grepl("avoid", var), "Avoiding others all/most of time", var_cat),
+         var_cat = ifelse(var=="contacts_avg_mod", "Average contacts outside home", var_cat),
+        var_cat = ifelse(var=="activities_masked_or_none", "Unmasked public activities", var_cat),
+        var_cat = factor(var_cat, levels = c("Cases per 100K", "Worried about severe illness", 
+                                             "Avoiding others all/most of time",
+                                             "Average contacts outside home", 
+                                             "Unmasked public activities")),
+        value2 = c(NA, diff(value)))
+
+# average over regions
+plot2b = plotK %>%
+  group_by(var, var_cat, date, region) %>% 
+  summarize(state_id = state_cat[1],
+    value = weighted.mean(value, w = weight),
+           value_raw = mean(value),
+    weight = sum(weight)) %>% 
+  mutate(state_id = "Average") %>%
+  group_by(var, var_cat, region) %>%
+         mutate(value2 = c(NA, diff(value)))
+
+# combine state-level data frame with overall data frame
+plot_data = bind_rows(plotK, plot2b) %>% 
+  mutate(alpha = ifelse(state_id=="Average", 1, .05)) 
+
+# function to make plots
+make_plot = function(df, date_start, date_end, var_keep){
+  plot = ggplot(df %>% filter(var == var_keep & 
+                                date>=date_start & date<=date_end), 
+                aes(x = date, y = value, group = state_id, alpha = alpha)) + 
+    geom_line() + 
+    facet_grid(var_cat~region, scales = "free") + 
+    scale_alpha(guide = F) +
+    theme_opts + labs(x = "", y = "") + ylim(0, NA)
+  
+  return(plot)
+}
+
+#View(us %>% dplyr::select(date, worried_sick))
+
+```
+
+\clearpage
+
+
+```{r fig1, echo = F, results = "tex", fig.height = 11, fig.width = 9, fig.align = "center", fig = T, fig.cap = "\\label{fig2} Trends by state, May 15, 2020 to September 6, 2020.  The dark line is the average, while the grey lines are individual states.  Note that y-axes differ across variables.  Due to survey reordering and minor wording changes, survey result levels are not directly comparable between Figures 1 and 2."}
+
+# make subplots
+# (facet_grid/facet_wrap don't give a x-axis on each subplot without setting them free, which I want here)
+plot1a = make_plot(plot_data, "2020-05-01", "2020-09-08", "cases100K_value")
+plot1b = make_plot(plot_data, "2020-05-01", "2020-09-08", "worried_sick")
+plot1c = make_plot(plot_data, "2020-05-01", "2020-09-08", "contacts_avg_mod")
+plot1d = make_plot(plot_data, "2020-05-01", "2020-09-08", "avoid_people")
+
+ggarrange(plot1a, plot1b, plot1c, plot1d, nrow = 4, common.legend = TRUE, legend="right")
+```
+
+\clearpage
+
+```{r fig2, echo = F, results = "tex", fig.height = 11, fig.width = 9, fig.align = "center", fig = T, fig.cap = "\\label{fig2} Trends by state from September 13, 2020 through November 1, 2020.  The dark line is the average, while the grey lines are individual states.  Note that y-axes differ across variables.  Due to survey reordering and minor wording changes, survey result levels are not directly comparable between Figures 1 and 2."}
+
+# make subplots
+# (facet_grid/facet_wrap don't give a x-axis on each subplot without setting them free, which I want here)
+plot2a = make_plot(plot_data, "2020-09-14", "2020-12-01", "cases100K_value")
+plot2b = make_plot(plot_data, "2020-09-14", "2020-12-01", "worried_sick")
+plot2c = make_plot(plot_data, "2020-09-14", "2020-12-01", "contacts_avg_mod")
+plot2d = make_plot(plot_data, "2020-09-14", "2020-12-01", "activities_masked_or_none")
+
+ggarrange(plot2a, plot2b, plot2c, plot2d, nrow = 4, common.legend = TRUE, legend="right")
+
+```
+
+\clearpage
+
+```{r}
+
+# NUMBERS FOR MAIN TEXT #
+
+#Our sample included 9,928,411 respondents, of whom 53% were female and 22% over age 65 (weighted). 
+sum(h$num)
+weighted.mean(h$age, w = h$weight)
+weighted.mean(h$gender_avg, w = h$weight)
+
+#During the summer surge, peak worry about COVID-19 illness coincided with the peak of detected cases per capita, and mitigating risk behaviors similarly rose and fell with case rates (Figure 1).  While worry increased nationally by 9 percentage points, behavior changes were most pronounced in states with largest summer per capita case rates.
+i = all %>% 
+  filter(date<="2020-08-31") %>%
+  gather(var, value, cases100K_value, worried_sick, avoid_people, contacts_avg_mod) %>% 
+  group_by(week, date, var) %>% 
+  summarize(value = weighted.mean(value, w = weight)) %>% spread(var, value)
+# worry, cases peaked week of 7/19 
+# 0.3324578-0.2461527 ~9 pp 
+
+#These included a decrease in average contacts of 2.2 (versus an increase of 0.3 spring peak states) and increase in avoiding others all or most of the time by 8pp (versus an increase of 5pp) (p<0.001 for comparisons).
+plotSUMMER = plotK %>% filter(state_id%in%c(spring, summer)) %>%
+    mutate(cat = ifelse(state_id%in%spring, "Spring", "Summer")) %>%
+  group_by(var, var_cat, date, cat) %>% 
+  summarize(state_id = state_cat[1],
+    value = weighted.mean(value, w = weight),
+           value_raw = mean(value)) 
+
+# Since September 13, both case rates and risk-mitigating behaviors have increased in every region, though with a greater lag than in the summer (Figure 2).  The largest declines in unmasked public activity were in the Midwest (11pp, to 24%), followed by the Northeast and West (7/6pp, to 20%), and the West and South (5pp, to 25%).  
+f = plot_data %>% ungroup() %>%
+  select(date, state_id, var, value, region, weight) %>% 
+  arrange(state_id, var, date) %>% 
+  mutate(fall = state_id%in%fall) %>%
+  dplyr::filter(var%in%c("cases100K_value", "contacts_avg_mod", 
+                         "worried_sick","activities_masked_or_none",
+                         "avoid_people")) %>% 
+  group_by(region, fall, state_id, var) %>% 
+  summarize(val = value[date=="2020-11-22"]-value[date=="2020-09-20"], 
+            post =  value[date=="2020-11-22"], pre = value[date=="2020-09-20"],
+            tot = sum(value)/length(value), 
+            weight = sum(weight)) %>%
+  arrange(var, val) %>% group_by(region, state_id) %>% 
+  mutate(chg = tot[var=="cases100K_value"]) %>% ungroup() %>% 
+  mutate(var_cat = ifelse(var=="activities_masked_or_none", "Unmasked public activities", var)) 
+
+f %>% filter(state_id=="Average" & var == "activities_masked_or_none") %>% mutate(pre = 1-pre, post = 1-post)
+
+#In the 10 highest fall incidence states, average contacts outside the home decreased by 3.3 (versus 2.0 in other states), and unmasked public activities by 12pp (versus 7pp) (p<0.001 for comparisons, see data processing script).  
+plotFALL = f %>% filter(state_id!="Average" & var %in% c("activities_masked_or_none", "contacts_avg_mod")) %>%
+  gather(var2, value2, val, post, pre, tot) %>%
+  group_by(var, fall, var2) %>% 
+  summarize(value2 = weighted.mean(value2, w = weight, na.rm = T)) %>% spread(var2, value2)
+
+g = f %>% filter(state_id!="Average" & var %in% c("activities_masked_or_none", "contacts_avg_mod"))
+
+# Improvements in risk mitigating behaviors varied across states, with largest changes in states with high initial levels of risky behavior.  For instance, unmasked public activity decreased in North Dakota from 46% to 26%, Montana from 40% to 26%, Utah from 39% to 23%, and Nebraska from 39% to 26%.
+head(f %>% filter(state_id %in% fall & var=="activities_masked_or_none") %>% mutate(pre = 1-pre, post = 1-post) %>% arrange(-val), n = 4)
+
+```
